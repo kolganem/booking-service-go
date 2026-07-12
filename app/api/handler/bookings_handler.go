@@ -18,6 +18,7 @@ import (
 type BookingService interface {
 	Create(ctx context.Context, req dto.CreateBookingRequest) (int64, error)
 	Cancel(ctx context.Context, id int64) error
+	RequestCancellation(ctx context.Context, id int64) error
 }
 
 // BookingQueries определяет операции чтения бронирований.
@@ -85,7 +86,7 @@ func (h *BookingsHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Cancel(r.Context(), id); err != nil {
+	if err := h.service.RequestCancellation(r.Context(), id); err != nil {
 		h.handleServiceError(w, err)
 		return
 	}
