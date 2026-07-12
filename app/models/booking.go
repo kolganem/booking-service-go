@@ -137,21 +137,21 @@ func RestoreBooking(
 // Допустимые переходы:
 //   - AwaitsConfirmation -> CancellationPending
 //   - Confirmed -> CancellationPending (только если StartDate > today)
-func (b *Booking) BeginCancellation(time time.Time) error {
+func (b *Booking) BeginCancellation(cancelationTime time.Time) error {
 	switch b.status {
 	case BookingStatusAwaitsConfirmation:
 		b.previousStatus = b.status
 		b.status = BookingStatusCancellationPending
-		b.cancellationRequestedAt = time
+		b.cancellationRequestedAt = cancelationTime
 		return nil
 	case BookingStatusConfirmed:
-		if !b.startDate.After(time) {
+		if !b.startDate.After(cancelationTime) {
 			return ErrCannotCancelPastBooking
 		}
 
 		b.previousStatus = b.status
 		b.status = BookingStatusCancellationPending
-		b.cancellationRequestedAt = time
+		b.cancellationRequestedAt = cancelationTime
 
 		return nil
 	case BookingStatusCancelled, BookingStatusCancellationPending:
@@ -181,7 +181,9 @@ func (b *Booking) RollbackCancellation() error {
 		return ErrInvalidStatusTransition
 	}
 	b.status = b.previousStatus
-	b.previousStatus = ""
+	if b.previousStatus == "" {
+		return ErrInvalidStatusTransition
+	}
 	b.cancellationRequestedAt = time.Time{}
 	return nil
 }
