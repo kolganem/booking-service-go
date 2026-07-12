@@ -85,6 +85,8 @@ func TestCancel_FromConfirmed_PastStartDate_Error(t *testing.T) {
 		time.Now().AddDate(0, 0, -3),
 		time.Now().AddDate(0, 0, -1),
 		time.Now().AddDate(0, 0, -5),
+		"",
+		time.Time{},
 	)
 
 	err := b.Cancel(time.Now())
