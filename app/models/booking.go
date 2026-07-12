@@ -162,7 +162,7 @@ func (b *Booking) BeginCancellation(cancelationTime time.Time) error {
 }
 
 // CompleteCancellation завершает отмену после успешной обработки команды Catalog.
-// Допустимый переход: CancellationPending -> Cancelled.
+// Допустимый переход: CancellationPending -> Cancelled
 func (b *Booking) CompleteCancellation() error {
 	if b.status != BookingStatusCancellationPending {
 		return ErrInvalidStatusTransition
