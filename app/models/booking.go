@@ -180,10 +180,10 @@ func (b *Booking) RollbackCancellation() error {
 	if b.status != BookingStatusCancellationPending {
 		return ErrInvalidStatusTransition
 	}
-	b.status = b.previousStatus
 	if b.previousStatus == "" {
 		return ErrInvalidStatusTransition
 	}
+	b.status = b.previousStatus
 	b.cancellationRequestedAt = time.Time{}
 	return nil
 }

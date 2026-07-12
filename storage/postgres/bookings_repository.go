@@ -150,7 +150,6 @@ func (r *BookingsRepository) GetAwaitingConfirmation(ctx context.Context, limit 
 }
 
 // scanBooking сканирует одну строку в доменный объект Booking.
-// scanBooking сканирует одну строку в доменный объект Booking.
 func (r *BookingsRepository) scanBooking(row pgx.Row) (*models.Booking, error) {
 	var (
 		id                      int64
