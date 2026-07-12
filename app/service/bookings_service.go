@@ -133,3 +133,64 @@ func (s *BookingsService) Confirm(ctx context.Context, id int64) error {
 
 	return nil
 }
+
+// RequestCancellation начинает отмену бронирования по Compensating Transaction Pattern.
+//
+// Шаги:
+//  1. Загрузка бронирования из БД
+//  2. Перевод в промежуточный статус CancellationPending (BeginCancellation)
+//  3. Сохранение промежуточного состояния
+//  4. Публикация команды отмены в Catalog
+//
+// Итоговое состояние (Cancelled или откат к предыдущему статусу) определяется
+// асинхронно: при ошибке обработки команды в Catalog (DLQ) вызывается HandleCancelError.
+func (s *BookingsService) RequestCancellation(ctx context.Context, id int64) error {
+	booking, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if err := booking.BeginCancellation(time.Now()); err != nil {
+		return err
+	}
+
+	if err := s.repo.Update(ctx, booking); err != nil {
+		return fmt.Errorf("обновление бронирования: %w", err)
+	}
+
+	s.logger.Info("отмена бронирования начата", zap.Int64("id", id))
+
+	if err := s.publisher.PublishCancelBookingJob(ctx, messaging.CancelBookingJobCommand{
+		EventId:   messaging.NewMessageID(),
+		RequestId: messaging.BookingIDToRequestID(id),
+	}); err != nil {
+		s.logger.Error("ошибка публикации CancelBookingJob", zap.Error(err), zap.Int64("bookingId", id))
+	}
+
+	return nil
+}
+
+// HandleCancelError выполняет откат отмены бронирования к предыдущему статусу
+// при ошибке обработки команды CancelBookingJob в Catalog (DLQ).
+func (s *BookingsService) HandleCancelError(ctx context.Context, requestID string) error {
+	bookingID, err := messaging.RequestIDToBookingID(requestID)
+	if err != nil {
+		return fmt.Errorf("извлечение bookingId из RequestId: %w", err)
+	}
+
+	booking, err := s.repo.GetByID(ctx, bookingID)
+	if err != nil {
+		return err
+	}
+
+	if err := booking.RollbackCancellation(); err != nil {
+		return err
+	}
+
+	if err := s.repo.Update(ctx, booking); err != nil {
+		return fmt.Errorf("обновление бронирования: %w", err)
+	}
+
+	s.logger.Info("отмена бронирования откачена", zap.Int64("id", bookingID))
+	return nil
+}
