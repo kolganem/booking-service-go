@@ -149,6 +149,60 @@ func (r *BookingsRepository) GetAwaitingConfirmation(ctx context.Context, limit 
 	return bookings, rows.Err()
 }
 
+// GetStatistics возвращает агрегированную статистику бронирований за период.
+// Период включительный с обеих сторон, фильтрация по полю created_at.
+// Вся агрегация выполняется на стороне БД.
+func (r *BookingsRepository) GetStatistics(ctx context.Context, dateFrom, dateTo time.Time) (models.BookingStatistics, error) {
+	var totalCount int64
+	err := r.pool.QueryRow(ctx, queryCountBookingsByPeriod, dateFrom, dateTo).Scan(&totalCount)
+	if err != nil {
+		return models.BookingStatistics{}, fmt.Errorf("подсчёт бронирований за период: %w", err)
+	}
+
+	statusRows, err := r.pool.Query(ctx, queryGetBookingStatusCounts, dateFrom, dateTo)
+	if err != nil {
+		return models.BookingStatistics{}, fmt.Errorf("получение статистики по статусам: %w", err)
+	}
+	defer statusRows.Close()
+
+	byStatus := make(map[models.BookingStatus]int64)
+	for statusRows.Next() {
+		var status string
+		var count int64
+		if err := statusRows.Scan(&status, &count); err != nil {
+			return models.BookingStatistics{}, fmt.Errorf("сканирование статистики по статусам: %w", err)
+		}
+		byStatus[models.BookingStatus(status)] = count
+	}
+	if err := statusRows.Err(); err != nil {
+		return models.BookingStatistics{}, fmt.Errorf("итерация по статистике статусов: %w", err)
+	}
+
+	resourceRows, err := r.pool.Query(ctx, queryGetTopResourcesByBookingCount, dateFrom, dateTo)
+	if err != nil {
+		return models.BookingStatistics{}, fmt.Errorf("получение топ ресурсов: %w", err)
+	}
+	defer resourceRows.Close()
+
+	var topResources []models.ResourceStatistic
+	for resourceRows.Next() {
+		var stat models.ResourceStatistic
+		if err := resourceRows.Scan(&stat.ResourceID, &stat.Count); err != nil {
+			return models.BookingStatistics{}, fmt.Errorf("сканирование топ ресурсов: %w", err)
+		}
+		topResources = append(topResources, stat)
+	}
+	if err := resourceRows.Err(); err != nil {
+		return models.BookingStatistics{}, fmt.Errorf("итерация по топ ресурсам: %w", err)
+	}
+
+	return models.BookingStatistics{
+		TotalCount:   totalCount,
+		ByStatus:     byStatus,
+		TopResources: topResources,
+	}, nil
+}
+
 // scanBooking сканирует одну строку в доменный объект Booking.
 func (r *BookingsRepository) scanBooking(row pgx.Row) (*models.Booking, error) {
 	var (
