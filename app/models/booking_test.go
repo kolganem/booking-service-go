@@ -211,6 +211,7 @@ func TestRollbackCancellation_ToAwaitsConfirmation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.BookingStatusAwaitsConfirmation, booking.Status())
 	assert.True(t, booking.CancellationRequestedAt().IsZero())
+	assert.Equal(t, models.BookingStatus(""), booking.PreviousStatus())
 }
 
 func TestRollbackCancellation_ToConfirmed(t *testing.T) {
@@ -223,6 +224,7 @@ func TestRollbackCancellation_ToConfirmed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.BookingStatusConfirmed, booking.Status())
 	assert.True(t, booking.CancellationRequestedAt().IsZero())
+	assert.Equal(t, models.BookingStatus(""), booking.PreviousStatus())
 }
 
 func TestRollbackCancellation_EmptyPreviousStatus_Error(t *testing.T) {
