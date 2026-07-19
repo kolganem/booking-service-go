@@ -153,12 +153,6 @@ func (r *BookingsRepository) GetAwaitingConfirmation(ctx context.Context, limit 
 // Период включительный с обеих сторон, фильтрация по полю created_at.
 // Вся агрегация выполняется на стороне БД.
 func (r *BookingsRepository) GetStatistics(ctx context.Context, dateFrom, dateTo time.Time) (models.BookingStatistics, error) {
-	var totalCount int64
-	err := r.pool.QueryRow(ctx, queryCountBookingsByPeriod, dateFrom, dateTo).Scan(&totalCount)
-	if err != nil {
-		return models.BookingStatistics{}, fmt.Errorf("подсчёт бронирований за период: %w", err)
-	}
-
 	statusRows, err := r.pool.Query(ctx, queryGetBookingStatusCounts, dateFrom, dateTo)
 	if err != nil {
 		return models.BookingStatistics{}, fmt.Errorf("получение статистики по статусам: %w", err)
@@ -166,6 +160,7 @@ func (r *BookingsRepository) GetStatistics(ctx context.Context, dateFrom, dateTo
 	defer statusRows.Close()
 
 	byStatus := make(map[models.BookingStatus]int64)
+	var totalCount int64
 	for statusRows.Next() {
 		var status string
 		var count int64
@@ -173,6 +168,7 @@ func (r *BookingsRepository) GetStatistics(ctx context.Context, dateFrom, dateTo
 			return models.BookingStatistics{}, fmt.Errorf("сканирование статистики по статусам: %w", err)
 		}
 		byStatus[models.BookingStatus(status)] = count
+		totalCount += count
 	}
 	if err := statusRows.Err(); err != nil {
 		return models.BookingStatistics{}, fmt.Errorf("итерация по статистике статусов: %w", err)

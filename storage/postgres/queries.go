@@ -40,11 +40,6 @@ const (
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED`
 
-	queryCountBookingsByPeriod = `
-		SELECT COUNT(*)
-		FROM bookings
-		WHERE created_at::date BETWEEN $1::date AND $2::date`
-
 	queryGetBookingStatusCounts = `
 		SELECT status, COUNT(*)
 		FROM bookings
