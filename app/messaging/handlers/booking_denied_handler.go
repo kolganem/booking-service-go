@@ -3,11 +3,13 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"go.uber.org/zap"
 
 	"booking-service/app/messaging"
+	"booking-service/app/models"
 	"booking-service/app/service"
 )
 
@@ -44,6 +46,13 @@ func (h *BookingDeniedHandler) Handle(ctx context.Context, body []byte) error {
 	)
 
 	if err := h.service.Cancel(ctx, bookingID); err != nil {
+		if errors.Is(err, models.ErrBookingNotFound) ||
+			errors.Is(err, models.ErrInvalidStatusTransition) ||
+			errors.Is(err, models.ErrCannotCancelPastBooking) {
+			h.logger.Warn("отмена невозможна (не найдено, недопустимый переход или прошедшая дата), пропускаем событие",
+				zap.Int64("bookingId", bookingID), zap.Error(err))
+			return nil
+		}
 		return fmt.Errorf("отмена бронирования %d: %w", bookingID, err)
 	}
 
