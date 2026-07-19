@@ -184,6 +184,7 @@ func (b *Booking) RollbackCancellation() error {
 		return ErrInvalidStatusTransition
 	}
 	b.status = b.previousStatus
+	b.previousStatus = ""
 	b.cancellationRequestedAt = time.Time{}
 	return nil
 }
