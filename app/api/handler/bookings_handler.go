@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -26,6 +28,7 @@ type BookingQueries interface {
 	GetByID(ctx context.Context, id int64) (dto.BookingResponse, error)
 	GetByFilter(ctx context.Context, req dto.GetBookingsByFilterRequest) (dto.PagedResponse[dto.BookingResponse], error)
 	GetStatus(ctx context.Context, id int64) (models.BookingStatus, error)
+	GetStatistics(ctx context.Context, dateFrom, dateTo time.Time) (dto.StatisticsResponse, error)
 }
 
 // BookingsHandler содержит обработчики HTTP-запросов для бронирований.
@@ -128,6 +131,34 @@ func (h *BookingsHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dto.BookingStatusResponse{Status: string(status)})
 }
 
+// GetStatistics обрабатывает GET /api/bookings/statistics.
+func (h *BookingsHandler) GetStatistics(w http.ResponseWriter, r *http.Request) {
+	dateFrom, err := parseDateParam(r, "dateFrom")
+	if err != nil {
+		writeProblemDetails(w, http.StatusBadRequest, "Ошибка валидации", err.Error())
+		return
+	}
+
+	dateTo, err := parseDateParam(r, "dateTo")
+	if err != nil {
+		writeProblemDetails(w, http.StatusBadRequest, "Ошибка валидации", err.Error())
+		return
+	}
+
+	if dateTo.Before(dateFrom) {
+		writeProblemDetails(w, http.StatusBadRequest, "Ошибка валидации", "dateTo не может быть раньше dateFrom")
+		return
+	}
+
+	stats, err := h.queries.GetStatistics(r.Context(), dateFrom, dateTo)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
 // handleServiceError маппит доменные ошибки на HTTP-ответы.
 func (h *BookingsHandler) handleServiceError(w http.ResponseWriter, err error) {
 	switch {
@@ -153,6 +184,18 @@ func (h *BookingsHandler) handleServiceError(w http.ResponseWriter, err error) {
 func parseIDParam(r *http.Request) (int64, error) {
 	idStr := chi.URLParam(r, "id")
 	return strconv.ParseInt(idStr, 10, 64)
+}
+
+func parseDateParam(r *http.Request, name string) (time.Time, error) {
+	value := r.URL.Query().Get(name)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("параметр %s обязателен", name)
+	}
+	t, err := time.Parse(dto.DateFormat, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("параметр %s должен быть в формате YYYY-MM-DD", name)
+	}
+	return t, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
