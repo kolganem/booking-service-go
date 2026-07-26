@@ -87,6 +87,7 @@ func TestCancel_FromConfirmed_PastStartDate_Error(t *testing.T) {
 		time.Now().AddDate(0, 0, -5),
 		"",
 		time.Time{},
+		time.Time{},
 	)
 
 	err := b.Cancel(time.Now())
@@ -138,6 +139,7 @@ func TestBeginCancellation_FromConfirmed_PastStartDate_Error(t *testing.T) {
 		time.Now().AddDate(0, 0, -5),
 		"",
 		time.Time{},
+		time.Time{},
 	)
 
 	err := b.BeginCancellation(time.Now())
@@ -167,6 +169,7 @@ func TestBeginCancellation_FromCancellationPending_Error(t *testing.T) {
 func TestCompleteCancellation_FromCancellationPending(t *testing.T) {
 	booking := createTestBooking(t)
 	require.NoError(t, booking.BeginCancellation(time.Now()))
+	require.NoError(t, booking.MarkCancellationRetried(time.Now()))
 
 	err := booking.CompleteCancellation()
 
@@ -174,6 +177,7 @@ func TestCompleteCancellation_FromCancellationPending(t *testing.T) {
 	assert.Equal(t, models.BookingStatusCancelled, booking.Status())
 	assert.Empty(t, booking.PreviousStatus())
 	assert.True(t, booking.CancellationRequestedAt().IsZero())
+	assert.True(t, booking.LastRetryAt().IsZero())
 }
 
 func TestCompleteCancellation_FromAwaitsConfirmation_Error(t *testing.T) {
@@ -205,12 +209,14 @@ func TestCompleteCancellation_FromCancelled_Error(t *testing.T) {
 func TestRollbackCancellation_ToAwaitsConfirmation(t *testing.T) {
 	booking := createTestBooking(t)
 	require.NoError(t, booking.BeginCancellation(time.Now()))
+	require.NoError(t, booking.MarkCancellationRetried(time.Now()))
 
 	err := booking.RollbackCancellation()
 
 	require.NoError(t, err)
 	assert.Equal(t, models.BookingStatusAwaitsConfirmation, booking.Status())
 	assert.True(t, booking.CancellationRequestedAt().IsZero())
+	assert.True(t, booking.LastRetryAt().IsZero())
 	assert.Equal(t, models.BookingStatus(""), booking.PreviousStatus())
 }
 
@@ -237,6 +243,7 @@ func TestRollbackCancellation_EmptyPreviousStatus_Error(t *testing.T) {
 		time.Now(),
 		"",
 		time.Now(),
+		time.Time{},
 	)
 
 	err := b.RollbackCancellation()
@@ -297,4 +304,24 @@ func TestConfirm_FromCancelled_Error(t *testing.T) {
 	err := booking.Confirm()
 
 	assert.ErrorIs(t, err, models.ErrInvalidStatusTransition)
+}
+
+func TestMarkCancellationRetried_FromCancellationPending(t *testing.T) {
+	booking := createTestBooking(t)
+	require.NoError(t, booking.BeginCancellation(time.Now()))
+	retriedAt := time.Now()
+
+	err := booking.MarkCancellationRetried(retriedAt)
+
+	require.NoError(t, err)
+	assert.WithinDuration(t, retriedAt, booking.LastRetryAt(), 0)
+}
+
+func TestMarkCancellationRetried_FromAwaitsConfirmation_Error(t *testing.T) {
+	booking := createTestBooking(t)
+
+	err := booking.MarkCancellationRetried(time.Now())
+
+	assert.ErrorIs(t, err, models.ErrInvalidStatusTransition)
+	assert.True(t, booking.LastRetryAt().IsZero())
 }

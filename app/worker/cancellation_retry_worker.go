@@ -24,19 +24,18 @@ type CancelPublisher interface {
 //
 // Логика работы:
 //  1. Получить бронирования в статусе CancellationPending, у которых
-//     cancellation_requested_at старше таймаута
+//     COALESCE(last_retry_at, cancellation_requested_at) старше таймаута
 //  2. Для каждого повторно опубликовать CancelBookingJobCommand
-//  3. Статус в БД не меняется -- переход в Cancelled или откат выполняется
+//  3. При успешной публикации отметить прогресс (last_retry_at = now) --
+//     это отодвигает запись в конец очереди выборки, поэтому новые зависшие
+//     отмены не блокируются старыми при batchSize < числа зависших записей
+//  4. Статус в БД не меняется -- переход в Cancelled или откат выполняется
 //     обычным flow (успешная обработка команды в Catalog или DLQ-rollback)
 //
-// NOTE: воркер не отмечает прогресс (cancellation_requested_at
-// не обновляется), а в системе пока нет триггера успешного завершения отмены
-// (models.Booking.CompleteCancellation() нигде не вызывается. Из-за этого, если
-// количество перманентно зависших бронирований превысит batchSize, выборка
-// каждый раз будет возвращать одни и те же самые старые записи -- новые
-// зависшие отмены перестанут попадать в ретрай, а старые будут повторно
-// отправляться бесконечно. 
-// Потенциальное решение для отдельной задачи (progress-marker + completion-trigger).
+// NOTE: в системе пока нет триггера успешного завершения отмены
+// (models.Booking.CompleteCancellation() нигде не вызывается за пределами
+// тестов), поэтому перманентно зависшие записи никогда не покидают
+// CancellationPending и будут ретраиться бесконечно. Это отдельная задача.
 type CancellationRetryWorker struct {
 	repo      models.BookingRepository
 	publisher CancelPublisher
@@ -126,4 +125,13 @@ func (w *CancellationRetryWorker) retryBooking(ctx context.Context, booking *mod
 	logger.Warn("повторно отправлена команда отмены для зависшего бронирования",
 		zap.Time("cancellationRequestedAt", booking.CancellationRequestedAt()),
 	)
+
+	retriedAt := time.Now()
+	if err := booking.MarkCancellationRetried(retriedAt); err != nil {
+		logger.Error("ошибка отметки прогресса ретрая", zap.Error(err))
+		return
+	}
+	if err := w.repo.Update(ctx, booking); err != nil {
+		logger.Error("ошибка сохранения прогресса ретрая", zap.Error(err))
+	}
 }

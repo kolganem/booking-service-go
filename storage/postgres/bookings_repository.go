@@ -66,10 +66,17 @@ func (r *BookingsRepository) Update(ctx context.Context, booking *models.Booking
 		cancellationRequestedAt = &t
 	}
 
+	var lastRetryAt *time.Time
+	if !booking.LastRetryAt().IsZero() {
+		t := booking.LastRetryAt()
+		lastRetryAt = &t
+	}
+
 	tag, err := r.pool.Exec(ctx, queryUpdateBooking,
 		string(booking.Status()),
 		previousStatus,
 		cancellationRequestedAt,
+		lastRetryAt,
 		booking.ID(),
 	)
 	if err != nil {
@@ -237,14 +244,15 @@ func (r *BookingsRepository) scanBooking(row pgx.Row) (*models.Booking, error) {
 		createdAt               time.Time
 		previousStatus          *string
 		cancellationRequestedAt *time.Time
+		lastRetryAt             *time.Time
 	)
 
-	err := row.Scan(&id, &status, &userID, &resourceID, &startDate, &endDate, &createdAt, &previousStatus, &cancellationRequestedAt)
+	err := row.Scan(&id, &status, &userID, &resourceID, &startDate, &endDate, &createdAt, &previousStatus, &cancellationRequestedAt, &lastRetryAt)
 	if err != nil {
 		return nil, err
 	}
 
-	return restoreBookingFromRow(id, status, userID, resourceID, startDate, endDate, createdAt, previousStatus, cancellationRequestedAt), nil
+	return restoreBookingFromRow(id, status, userID, resourceID, startDate, endDate, createdAt, previousStatus, cancellationRequestedAt, lastRetryAt), nil
 }
 
 // scanBookingFromRows сканирует строку из pgx.Rows.
@@ -259,14 +267,15 @@ func (r *BookingsRepository) scanBookingFromRows(rows pgx.Rows) (*models.Booking
 		createdAt               time.Time
 		previousStatus          *string
 		cancellationRequestedAt *time.Time
+		lastRetryAt             *time.Time
 	)
 
-	err := rows.Scan(&id, &status, &userID, &resourceID, &startDate, &endDate, &createdAt, &previousStatus, &cancellationRequestedAt)
+	err := rows.Scan(&id, &status, &userID, &resourceID, &startDate, &endDate, &createdAt, &previousStatus, &cancellationRequestedAt, &lastRetryAt)
 	if err != nil {
 		return nil, err
 	}
 
-	return restoreBookingFromRow(id, status, userID, resourceID, startDate, endDate, createdAt, previousStatus, cancellationRequestedAt), nil
+	return restoreBookingFromRow(id, status, userID, resourceID, startDate, endDate, createdAt, previousStatus, cancellationRequestedAt, lastRetryAt), nil
 }
 
 // restoreBookingFromRow конвертирует NULL-able колонки БД в доменный объект.
@@ -277,6 +286,7 @@ func restoreBookingFromRow(
 	startDate, endDate, createdAt time.Time,
 	previousStatus *string,
 	cancellationRequestedAt *time.Time,
+	lastRetryAt *time.Time,
 ) *models.Booking {
 	var prevStatus models.BookingStatus
 	if previousStatus != nil {
@@ -288,5 +298,10 @@ func restoreBookingFromRow(
 		sentAt = *cancellationRequestedAt
 	}
 
-	return models.RestoreBooking(id, models.BookingStatus(status), userID, resourceID, startDate, endDate, createdAt, prevStatus, sentAt)
+	var retriedAt time.Time
+	if lastRetryAt != nil {
+		retriedAt = *lastRetryAt
+	}
+
+	return models.RestoreBooking(id, models.BookingStatus(status), userID, resourceID, startDate, endDate, createdAt, prevStatus, sentAt, retriedAt)
 }

@@ -39,6 +39,7 @@ type Booking struct {
 	createdAt               time.Time
 	previousStatus          BookingStatus
 	cancellationRequestedAt time.Time
+	lastRetryAt             time.Time
 }
 
 func (b *Booking) ID() int64                          { return b.id }
@@ -50,6 +51,7 @@ func (b *Booking) EndDate() time.Time                 { return b.endDate }
 func (b *Booking) CreatedAt() time.Time               { return b.createdAt }
 func (b *Booking) PreviousStatus() BookingStatus      { return b.previousStatus }
 func (b *Booking) CancellationRequestedAt() time.Time { return b.cancellationRequestedAt }
+func (b *Booking) LastRetryAt() time.Time             { return b.lastRetryAt }
 
 // NewBooking создаёт новое бронирование в статусе AwaitsConfirmation.
 func NewBooking(userID, resourceID int64, startDate, endDate time.Time) (*Booking, error) {
@@ -91,6 +93,7 @@ func (b *Booking) Confirm() error {
 		b.status = BookingStatusConfirmed
 		b.previousStatus = ""
 		b.cancellationRequestedAt = time.Time{}
+		b.lastRetryAt = time.Time{}
 		return nil
 	case BookingStatusConfirmed, BookingStatusCancelled:
 		return ErrInvalidStatusTransition
@@ -130,6 +133,7 @@ func RestoreBooking(
 	startDate, endDate, createdAt time.Time,
 	previousStatus BookingStatus,
 	cancellationRequestedAt time.Time,
+	lastRetryAt time.Time,
 ) *Booking {
 	return &Booking{
 		id:                      id,
@@ -141,6 +145,7 @@ func RestoreBooking(
 		createdAt:               createdAt,
 		previousStatus:          previousStatus,
 		cancellationRequestedAt: cancellationRequestedAt,
+		lastRetryAt:             lastRetryAt,
 	}
 }
 
@@ -183,6 +188,7 @@ func (b *Booking) CompleteCancellation() error {
 	b.status = BookingStatusCancelled
 	b.previousStatus = ""
 	b.cancellationRequestedAt = time.Time{}
+	b.lastRetryAt = time.Time{}
 	return nil
 }
 
@@ -199,5 +205,20 @@ func (b *Booking) RollbackCancellation() error {
 	b.status = b.previousStatus
 	b.previousStatus = ""
 	b.cancellationRequestedAt = time.Time{}
+	b.lastRetryAt = time.Time{}
+	return nil
+}
+
+// MarkCancellationRetried фиксирует повторную отправку команды отмены.
+// Используется CancellationRetryWorker: продвигает "точку прогресса" выборки
+// зависших отмен (ORDER BY ... LIMIT batchSize), чтобы записи, для которых
+// отмена уже была переотправлена, уступали место в следующей выборке новым
+// зависшим записям.
+// Допустимо только в статусе CancellationPending.
+func (b *Booking) MarkCancellationRetried(retriedAt time.Time) error {
+	if b.status != BookingStatusCancellationPending {
+		return ErrInvalidStatusTransition
+	}
+	b.lastRetryAt = retriedAt
 	return nil
 }

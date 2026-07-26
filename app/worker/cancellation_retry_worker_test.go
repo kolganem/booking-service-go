@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"booking-service/app/messaging"
@@ -19,6 +20,8 @@ type fakeStuckRepository struct {
 	err          error
 	gotOlderThan time.Time
 	gotLimit     int
+	updated      []models.Booking
+	updateErr    error
 }
 
 func (f *fakeStuckRepository) GetStuckCancellations(_ context.Context, olderThan time.Time, limit int) ([]models.Booking, error) {
@@ -28,6 +31,14 @@ func (f *fakeStuckRepository) GetStuckCancellations(_ context.Context, olderThan
 		return nil, f.err
 	}
 	return f.bookings, nil
+}
+
+func (f *fakeStuckRepository) Update(_ context.Context, booking *models.Booking) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	f.updated = append(f.updated, *booking)
+	return nil
 }
 
 type fakePublisher struct {
@@ -53,6 +64,7 @@ func stuckBooking(id int64, requestedAt time.Time) models.Booking {
 		time.Now().AddDate(0, 0, -1),
 		models.BookingStatusAwaitsConfirmation,
 		requestedAt,
+		time.Time{},
 	)
 	return *b
 }
@@ -122,4 +134,57 @@ func TestProcessBatch_EmptyResult_DoesNotPublish(t *testing.T) {
 	w.processBatch(context.Background())
 
 	assert.Empty(t, pub.published)
+}
+
+func TestProcessBatch_MarksProgress_OnSuccessfulPublish(t *testing.T) {
+	repo := &fakeStuckRepository{bookings: []models.Booking{
+		stuckBooking(1, time.Now().Add(-10*time.Minute)),
+		stuckBooking(2, time.Now().Add(-10*time.Minute)),
+	}}
+	pub := &fakePublisher{}
+	w := NewCancellationRetryWorker(repo, pub, 5*time.Minute, time.Second, 10, zap.NewNop())
+
+	before := time.Now()
+	w.processBatch(context.Background())
+
+	require.Len(t, repo.updated, 2)
+	for _, b := range repo.updated {
+		assert.False(t, b.LastRetryAt().IsZero())
+		assert.WithinDuration(t, before, b.LastRetryAt(), time.Second)
+	}
+}
+
+func TestProcessBatch_DoesNotMarkProgress_OnPublishFailure(t *testing.T) {
+	repo := &fakeStuckRepository{bookings: []models.Booking{
+		stuckBooking(1, time.Now().Add(-10*time.Minute)),
+		stuckBooking(2, time.Now().Add(-10*time.Minute)),
+	}}
+	pub := &fakePublisher{errFor: map[string]error{
+		messaging.BookingIDToRequestID(2): errors.New("publish failed"),
+	}}
+	w := NewCancellationRetryWorker(repo, pub, 5*time.Minute, time.Second, 10, zap.NewNop())
+
+	w.processBatch(context.Background())
+
+	require.Len(t, repo.updated, 1)
+	assert.Equal(t, int64(1), repo.updated[0].ID())
+}
+
+func TestProcessBatch_UpdateError_DoesNotStopOthers(t *testing.T) {
+	repo := &fakeStuckRepository{
+		bookings: []models.Booking{
+			stuckBooking(1, time.Now().Add(-10*time.Minute)),
+			stuckBooking(2, time.Now().Add(-10*time.Minute)),
+		},
+		updateErr: errors.New("db down"),
+	}
+	pub := &fakePublisher{}
+	w := NewCancellationRetryWorker(repo, pub, 5*time.Minute, time.Second, 10, zap.NewNop())
+
+	w.processBatch(context.Background())
+
+	assert.ElementsMatch(t, []string{
+		messaging.BookingIDToRequestID(1),
+		messaging.BookingIDToRequestID(2),
+	}, pub.published)
 }
