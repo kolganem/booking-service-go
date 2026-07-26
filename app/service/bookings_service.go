@@ -115,23 +115,28 @@ func (s *BookingsService) Cancel(ctx context.Context, id int64) error {
 
 // Confirm подтверждает бронирование по ID.
 // Используется обработчиком событий RabbitMQ.
-func (s *BookingsService) Confirm(ctx context.Context, id int64) error {
+// Возвращает статус бронирования до подтверждения -- вызывающий код
+// использует его, чтобы обнаружить race condition (Catalog подтвердил
+// бронирование, отмена которого уже была начата).
+func (s *BookingsService) Confirm(ctx context.Context, id int64) (models.BookingStatus, error) {
 	booking, err := s.repo.GetByID(ctx, id)
 	if err != nil {
-		return err
+		return "", err
 	}
 
+	previousStatus := booking.Status()
+
 	if err := booking.Confirm(); err != nil {
-		return err
+		return "", err
 	}
 
 	if err := s.repo.Update(ctx, booking); err != nil {
-		return fmt.Errorf("обновление бронирования: %w", err)
+		return "", fmt.Errorf("обновление бронирования: %w", err)
 	}
 
 	s.logger.Info("бронирование подтверждено", zap.Int64("id", id))
 
-	return nil
+	return previousStatus, nil
 }
 
 // RequestCancellation начинает отмену бронирования по Compensating Transaction Pattern.
