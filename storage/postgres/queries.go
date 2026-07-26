@@ -40,6 +40,15 @@ const (
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED`
 
+	queryGetStuckCancellations = `
+		SELECT id, status, user_id, resource_id, start_date, end_date, created_at, previous_status, cancellation_requested_at
+		FROM bookings
+		WHERE status = 'cancellation_pending'
+		  AND cancellation_requested_at < $1
+		ORDER BY cancellation_requested_at ASC
+		LIMIT $2
+		FOR UPDATE SKIP LOCKED`
+
 	queryGetBookingStatusCounts = `
 		SELECT status, COUNT(*)
 		FROM bookings
