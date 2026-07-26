@@ -149,6 +149,28 @@ func (r *BookingsRepository) GetAwaitingConfirmation(ctx context.Context, limit 
 	return bookings, rows.Err()
 }
 
+// GetStuckCancellations возвращает бронирования, зависшие в статусе
+// CancellationPending дольше заданного таймаута, с пессимистичной
+// блокировкой FOR UPDATE SKIP LOCKED.
+func (r *BookingsRepository) GetStuckCancellations(ctx context.Context, olderThan time.Time, limit int) ([]models.Booking, error) {
+	rows, err := r.pool.Query(ctx, queryGetStuckCancellations, olderThan, limit)
+	if err != nil {
+		return nil, fmt.Errorf("получение зависших отмен: %w", err)
+	}
+	defer rows.Close()
+
+	var bookings []models.Booking
+	for rows.Next() {
+		booking, err := r.scanBookingFromRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("сканирование бронирования: %w", err)
+		}
+		bookings = append(bookings, *booking)
+	}
+
+	return bookings, rows.Err()
+}
+
 // GetStatistics возвращает агрегированную статистику бронирований за период.
 // Период включительный с обеих сторон, фильтрация по полю created_at.
 // Вся агрегация выполняется на стороне БД.
