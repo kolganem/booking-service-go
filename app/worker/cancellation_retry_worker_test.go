@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"booking-service/app/messaging"
 	"booking-service/app/models"
@@ -168,6 +170,30 @@ func TestProcessBatch_DoesNotMarkProgress_OnPublishFailure(t *testing.T) {
 
 	require.Len(t, repo.updated, 1)
 	assert.Equal(t, int64(1), repo.updated[0].ID())
+}
+
+func TestProcessBatch_LogsSummaryWithRetryAndErrorCounts(t *testing.T) {
+	repo := &fakeStuckRepository{bookings: []models.Booking{
+		stuckBooking(1, time.Now().Add(-10*time.Minute)),
+		stuckBooking(2, time.Now().Add(-10*time.Minute)),
+		stuckBooking(3, time.Now().Add(-10*time.Minute)),
+	}}
+	pub := &fakePublisher{errFor: map[string]error{
+		messaging.BookingIDToRequestID(2): errors.New("publish failed"),
+	}}
+	core, recorded := observer.New(zapcore.InfoLevel)
+	w := NewCancellationRetryWorker(repo, pub, 5*time.Minute, time.Second, 10, zap.New(core))
+
+	w.processBatch(context.Background())
+
+	summary := recorded.FilterMessage("итог обработки пакета зависших отмен")
+	require.Equal(t, 1, summary.Len())
+
+	entry := summary.All()[0]
+	assert.Equal(t, zapcore.InfoLevel, entry.Level)
+	fields := entry.ContextMap()
+	assert.EqualValues(t, 2, fields["retry"])
+	assert.EqualValues(t, 1, fields["errors"])
 }
 
 func TestProcessBatch_UpdateError_DoesNotStopOthers(t *testing.T) {

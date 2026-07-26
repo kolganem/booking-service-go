@@ -102,14 +102,25 @@ func (w *CancellationRetryWorker) processBatch(ctx context.Context) {
 
 	w.logger.Info("повторная отправка зависших отмен", zap.Int("count", len(bookings)))
 
+	var retried, errored int
 	for _, booking := range bookings {
-		w.retryBooking(ctx, &booking)
+		if err := w.retryBooking(ctx, &booking); err != nil {
+			errored++
+			continue
+		}
+		retried++
 	}
+
+	w.logger.Info("итог обработки пакета зависших отмен",
+		zap.Int("retry", retried),
+		zap.Int("errors", errored),
+	)
 }
 
 // retryBooking повторно отправляет команду отмены для одного бронирования.
-// Ошибка не прерывает обработку остальных бронирований в пакете.
-func (w *CancellationRetryWorker) retryBooking(ctx context.Context, booking *models.Booking) {
+// Ошибка не прерывает обработку остальных бронирований в пакете, но
+// возвращается вызывающему коду для подсчёта итогов по пакету.
+func (w *CancellationRetryWorker) retryBooking(ctx context.Context, booking *models.Booking) error {
 	bookingID := booking.ID()
 	logger := w.logger.With(zap.Int64("bookingId", bookingID))
 
@@ -119,7 +130,7 @@ func (w *CancellationRetryWorker) retryBooking(ctx context.Context, booking *mod
 	})
 	if err != nil {
 		logger.Error("ошибка повторной публикации CancelBookingJob", zap.Error(err))
-		return
+		return err
 	}
 
 	logger.Warn("повторно отправлена команда отмены для зависшего бронирования",
@@ -129,9 +140,11 @@ func (w *CancellationRetryWorker) retryBooking(ctx context.Context, booking *mod
 	retriedAt := time.Now()
 	if err := booking.MarkCancellationRetried(retriedAt); err != nil {
 		logger.Error("ошибка отметки прогресса ретрая", zap.Error(err))
-		return
+		return err
 	}
 	if err := w.repo.Update(ctx, booking); err != nil {
 		logger.Error("ошибка сохранения прогресса ретрая", zap.Error(err))
+		return err
 	}
+	return nil
 }
