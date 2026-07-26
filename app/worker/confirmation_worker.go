@@ -14,7 +14,7 @@ import (
 // ConfirmationWorker -- фоновый воркер для опроса Catalog и подтверждения бронирований.
 //
 // Логика работы:
-//  1. Получить бронирования в статусе AwaitsConfirmation (с блокировкой FOR UPDATE SKIP LOCKED)
+//  1. Получить бронирования в статусе AwaitsConfirmation
 //  2. Для каждого бронирования запросить статус у Catalog-сервиса
 //  3. Если Catalog подтвердил -- вызвать BookingsService.Confirm()
 //  4. Если Catalog отклонил -- вызвать BookingsService.Cancel()
@@ -101,7 +101,7 @@ func (w *ConfirmationWorker) processBooking(ctx context.Context, booking *models
 
 	switch job.Status {
 	case "confirmed":
-		if err := w.service.Confirm(ctx, bookingID); err != nil {
+		if _, err := w.service.Confirm(ctx, bookingID); err != nil {
 			logger.Error("ошибка подтверждения бронирования", zap.Error(err))
 			return
 		}

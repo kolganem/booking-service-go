@@ -37,8 +37,7 @@ const (
 		FROM bookings
 		WHERE status = 'awaits_confirmation'
 		ORDER BY created_at ASC
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED`
+		LIMIT $1`
 
 	queryGetStuckCancellations = `
 		SELECT id, status, user_id, resource_id, start_date, end_date, created_at, previous_status, cancellation_requested_at
@@ -46,8 +45,7 @@ const (
 		WHERE status = 'cancellation_pending'
 		  AND cancellation_requested_at < $1
 		ORDER BY cancellation_requested_at ASC
-		LIMIT $2
-		FOR UPDATE SKIP LOCKED`
+		LIMIT $2`
 
 	queryGetBookingStatusCounts = `
 		SELECT status, COUNT(*)

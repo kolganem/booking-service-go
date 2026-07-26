@@ -24,7 +24,7 @@ type CancelPublisher interface {
 //
 // Логика работы:
 //  1. Получить бронирования в статусе CancellationPending, у которых
-//     cancellation_requested_at старше таймаута (с блокировкой FOR UPDATE SKIP LOCKED)
+//     cancellation_requested_at старше таймаута
 //  2. Для каждого повторно опубликовать CancelBookingJobCommand
 //  3. Статус в БД не меняется -- переход в Cancelled или откат выполняется
 //     обычным flow (успешная обработка команды в Catalog или DLQ-rollback)

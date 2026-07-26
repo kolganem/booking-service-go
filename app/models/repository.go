@@ -19,13 +19,15 @@ type BookingRepository interface {
 	// GetByFilter возвращает список бронирований с пагинацией.
 	GetByFilter(ctx context.Context, filter BookingFilter) ([]Booking, int64, error)
 
-	// GetAwaitingConfirmation возвращает бронирования в статусе AwaitsConfirmation
-	// с пессимистичной блокировкой (SELECT ... FOR UPDATE SKIP LOCKED).
+	// GetAwaitingConfirmation возвращает бронирования в статусе AwaitsConfirmation.
+	// Без блокировки строк: при нескольких работающих инстансах воркера одна и
+	// та же запись может быть возвращена параллельно более чем одному вызову.
 	GetAwaitingConfirmation(ctx context.Context, limit int) ([]Booking, error)
 
 	// GetStuckCancellations возвращает бронирования в статусе CancellationPending,
-	// у которых cancellation_requested_at старше olderThan, с пессимистичной
-	// блокировкой (SELECT ... FOR UPDATE SKIP LOCKED).
+	// у которых cancellation_requested_at старше olderThan.
+	// Без блокировки строк: при нескольких работающих инстансах воркера одна и
+	// та же запись может быть возвращена параллельно более чем одному вызову.
 	GetStuckCancellations(ctx context.Context, olderThan time.Time, limit int) ([]Booking, error)
 
 	// GetStatistics возвращает статистику бронирований за указанный период.

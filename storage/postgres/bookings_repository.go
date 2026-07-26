@@ -128,8 +128,10 @@ func (r *BookingsRepository) GetByFilter(ctx context.Context, filter models.Book
 	return bookings, totalCount, nil
 }
 
-// GetAwaitingConfirmation возвращает бронирования, ожидающие подтверждения,
-// с пессимистичной блокировкой FOR UPDATE SKIP LOCKED.
+// GetAwaitingConfirmation возвращает бронирования, ожидающие подтверждения.
+// Запрос выполняется вне явной транзакции, поэтому блокировку строк не
+// использует: параллельные вызовы (например, из нескольких инстансов
+// воркера) могут получить одни и те же записи.
 func (r *BookingsRepository) GetAwaitingConfirmation(ctx context.Context, limit int) ([]models.Booking, error) {
 	rows, err := r.pool.Query(ctx, queryGetAwaitingConfirmation, limit)
 	if err != nil {
@@ -150,8 +152,10 @@ func (r *BookingsRepository) GetAwaitingConfirmation(ctx context.Context, limit 
 }
 
 // GetStuckCancellations возвращает бронирования, зависшие в статусе
-// CancellationPending дольше заданного таймаута, с пессимистичной
-// блокировкой FOR UPDATE SKIP LOCKED.
+// CancellationPending дольше заданного таймаута.
+// Запрос выполняется вне явной транзакции, поэтому блокировку строк не
+// использует: параллельные вызовы (например, из нескольких инстансов
+// воркера) могут получить одни и те же записи.
 func (r *BookingsRepository) GetStuckCancellations(ctx context.Context, olderThan time.Time, limit int) ([]models.Booking, error) {
 	rows, err := r.pool.Query(ctx, queryGetStuckCancellations, olderThan, limit)
 	if err != nil {
