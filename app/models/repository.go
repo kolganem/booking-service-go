@@ -23,6 +23,11 @@ type BookingRepository interface {
 	// с пессимистичной блокировкой (SELECT ... FOR UPDATE SKIP LOCKED).
 	GetAwaitingConfirmation(ctx context.Context, limit int) ([]Booking, error)
 
+	// GetStuckCancellations возвращает бронирования в статусе CancellationPending,
+	// у которых cancellation_requested_at старше olderThan, с пессимистичной
+	// блокировкой (SELECT ... FOR UPDATE SKIP LOCKED).
+	GetStuckCancellations(ctx context.Context, olderThan time.Time, limit int) ([]Booking, error)
+
 	// GetStatistics возвращает статистику бронирований за указанный период.
 	GetStatistics(ctx context.Context, dateFrom, dateTo time.Time) (BookingStatistics, error)
 }
