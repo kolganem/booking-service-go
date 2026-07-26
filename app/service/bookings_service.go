@@ -117,7 +117,9 @@ func (s *BookingsService) Cancel(ctx context.Context, id int64) error {
 // Используется обработчиком событий RabbitMQ.
 // Возвращает статус бронирования до подтверждения -- вызывающий код
 // использует его, чтобы обнаружить race condition (Catalog подтвердил
-// бронирование, отмена которого уже была начата).
+// бронирование, отмена которого уже была начата), а при ErrInvalidStatusTransition --
+// чтобы отличить безобидный дубль события (уже Confirmed) от рассинхронизации
+// с Catalog (уже Cancelled).
 func (s *BookingsService) Confirm(ctx context.Context, id int64) (models.BookingStatus, error) {
 	booking, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -127,7 +129,7 @@ func (s *BookingsService) Confirm(ctx context.Context, id int64) (models.Booking
 	previousStatus := booking.Status()
 
 	if err := booking.Confirm(); err != nil {
-		return "", err
+		return previousStatus, err
 	}
 
 	if err := s.repo.Update(ctx, booking); err != nil {

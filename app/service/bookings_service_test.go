@@ -83,13 +83,14 @@ func TestConfirm_RepositoryGetError_PropagatesError(t *testing.T) {
 	assert.ErrorIs(t, err, wantErr)
 }
 
-func TestConfirm_InvalidTransition_PropagatesError(t *testing.T) {
+func TestConfirm_InvalidTransition_PropagatesErrorAndCurrentStatus(t *testing.T) {
 	booking := newAwaitingBooking(t)
 	require.NoError(t, booking.Confirm())
 	repo := &fakeConfirmRepository{booking: booking}
 	svc := service.NewBookingsService(repo, nil, zap.NewNop())
 
-	_, err := svc.Confirm(context.Background(), 1)
+	previousStatus, err := svc.Confirm(context.Background(), 1)
 
 	assert.ErrorIs(t, err, models.ErrInvalidStatusTransition)
+	assert.Equal(t, models.BookingStatusConfirmed, previousStatus)
 }

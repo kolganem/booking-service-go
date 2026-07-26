@@ -100,7 +100,39 @@ func TestHandle_BookingNotFound_ReturnsNilAndLogsWarning(t *testing.T) {
 	err := h.Handle(context.Background(), eventBody(t, 1))
 
 	require.NoError(t, err)
-	assert.Equal(t, 1, recorded.FilterMessageSnippet("не найдено или недопустимый переход").Len())
+	assert.Equal(t, 1, recorded.FilterMessageSnippet("бронирование не найдено").Len())
+}
+
+func TestHandle_AlreadyConfirmed_ReturnsNilAndLogsDebug(t *testing.T) {
+	booking := newAwaitingBooking(t)
+	require.NoError(t, booking.Confirm())
+	repo := &fakeRepository{booking: booking}
+	h, recorded := newHandler(repo)
+
+	err := h.Handle(context.Background(), eventBody(t, 1))
+
+	require.NoError(t, err)
+	assert.Equal(t, models.BookingStatusConfirmed, repo.booking.Status())
+
+	entries := recorded.FilterMessageSnippet("уже подтверждено")
+	require.Equal(t, 1, entries.Len())
+	assert.Equal(t, zapcore.DebugLevel, entries.All()[0].Level)
+}
+
+func TestHandle_AlreadyCancelled_ReturnsNilAndLogsDesyncError(t *testing.T) {
+	booking := newAwaitingBooking(t)
+	require.NoError(t, booking.Cancel(time.Now()))
+	repo := &fakeRepository{booking: booking}
+	h, recorded := newHandler(repo)
+
+	err := h.Handle(context.Background(), eventBody(t, 1))
+
+	require.NoError(t, err)
+	assert.Equal(t, models.BookingStatusCancelled, repo.booking.Status())
+
+	entries := recorded.FilterMessageSnippet("рассинхронизация с Catalog")
+	require.Equal(t, 1, entries.Len())
+	assert.Equal(t, zapcore.ErrorLevel, entries.All()[0].Level)
 }
 
 func TestHandle_InvalidRequestId_ReturnsError(t *testing.T) {
