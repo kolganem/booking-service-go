@@ -46,6 +46,12 @@ type CatalogConfig struct {
 type WorkerConfig struct {
 	ConfirmationInterval time.Duration `envconfig:"WORKER_CONFIRMATION_INTERVAL" default:"30s"`
 	ConfirmationBatch    int           `envconfig:"WORKER_CONFIRMATION_BATCH" default:"10"`
+
+	// CancellationStuckTimeout -- через сколько бронирование в cancellation_pending
+	// считается зависшим (Catalog не ответил timeout/потеря сообщения).
+	CancellationStuckTimeout  time.Duration `envconfig:"WORKER_CANCELLATION_STUCK_TIMEOUT" default:"5m"`
+	CancellationRetryInterval time.Duration `envconfig:"WORKER_CANCELLATION_RETRY_INTERVAL" default:"30s"`
+	CancellationRetryBatch    int           `envconfig:"WORKER_CANCELLATION_RETRY_BATCH" default:"10"`
 }
 
 type RabbitMQConfig struct {
