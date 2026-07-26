@@ -7,17 +7,17 @@ const (
 		RETURNING id`
 
 	queryGetBookingByID = `
-		SELECT id, status, user_id, resource_id, start_date, end_date, created_at
+		SELECT id, status, user_id, resource_id, start_date, end_date, created_at, previous_status, cancellation_requested_at, last_retry_at
 		FROM bookings
 		WHERE id = $1`
 
-	queryUpdateBookingStatus = `
+	queryUpdateBooking = `
 		UPDATE bookings
-		SET status = $1
-		WHERE id = $2`
+		SET status = $1, previous_status = $2, cancellation_requested_at = $3, last_retry_at = $4
+		WHERE id = $5`
 
 	queryGetBookingsByFilter = `
-		SELECT id, status, user_id, resource_id, start_date, end_date, created_at
+		SELECT id, status, user_id, resource_id, start_date, end_date, created_at, previous_status, cancellation_requested_at, last_retry_at
 		FROM bookings
 		WHERE ($1::BIGINT IS NULL OR user_id = $1)
 		  AND ($2::BIGINT IS NULL OR resource_id = $2)
@@ -33,10 +33,31 @@ const (
 		  AND ($3::VARCHAR IS NULL OR status = $3)`
 
 	queryGetAwaitingConfirmation = `
-		SELECT id, status, user_id, resource_id, start_date, end_date, created_at
+		SELECT id, status, user_id, resource_id, start_date, end_date, created_at, previous_status, cancellation_requested_at, last_retry_at
 		FROM bookings
 		WHERE status = 'awaits_confirmation'
 		ORDER BY created_at ASC
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED`
+		LIMIT $1`
+
+	queryGetStuckCancellations = `
+		SELECT id, status, user_id, resource_id, start_date, end_date, created_at, previous_status, cancellation_requested_at, last_retry_at
+		FROM bookings
+		WHERE status = 'cancellation_pending'
+		  AND COALESCE(last_retry_at, cancellation_requested_at) < $1
+		ORDER BY COALESCE(last_retry_at, cancellation_requested_at) ASC
+		LIMIT $2`
+
+	queryGetBookingStatusCounts = `
+		SELECT status, COUNT(*)
+		FROM bookings
+		WHERE created_at::date BETWEEN $1::date AND $2::date
+		GROUP BY status`
+
+	queryGetTopResourcesByBookingCount = `
+		SELECT resource_id, COUNT(*) AS booking_count
+		FROM bookings
+		WHERE created_at::date BETWEEN $1::date AND $2::date
+		GROUP BY resource_id
+		ORDER BY booking_count DESC, resource_id ASC
+		LIMIT 5`
 )

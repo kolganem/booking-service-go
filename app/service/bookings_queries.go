@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -41,6 +42,41 @@ func (q *BookingsQueries) GetStatus(ctx context.Context, id int64) (models.Booki
 		return "", err
 	}
 	return booking.Status(), nil
+}
+
+// GetStatistics возвращает агрегированную статистику бронирований за период.
+func (q *BookingsQueries) GetStatistics(ctx context.Context, dateFrom, dateTo time.Time) (dto.StatisticsResponse, error) {
+	statistics, err := q.repo.GetStatistics(ctx, dateFrom, dateTo)
+	if err != nil {
+		return dto.StatisticsResponse{}, fmt.Errorf("получение статистики: %w", err)
+	}
+
+	return mapStatisticsToResponse(statistics), nil
+}
+
+// mapStatisticsToResponse конвертирует доменную статистику в DTO ответа,
+// гарантируя присутствие всех известных статусов (даже с нулевым count).
+func mapStatisticsToResponse(s models.BookingStatistics) dto.StatisticsResponse {
+	byStatus := map[string]int64{
+		string(models.BookingStatusAwaitsConfirmation):  s.ByStatus[models.BookingStatusAwaitsConfirmation],
+		string(models.BookingStatusConfirmed):           s.ByStatus[models.BookingStatusConfirmed],
+		string(models.BookingStatusCancelled):           s.ByStatus[models.BookingStatusCancelled],
+		string(models.BookingStatusCancellationPending): s.ByStatus[models.BookingStatusCancellationPending],
+	}
+
+	topResources := make([]dto.ResourceStatItem, 0, len(s.TopResources))
+	for _, r := range s.TopResources {
+		topResources = append(topResources, dto.ResourceStatItem{
+			ResourceID: r.ResourceID,
+			Count:      r.Count,
+		})
+	}
+
+	return dto.StatisticsResponse{
+		TotalCount:   s.TotalCount,
+		ByStatus:     byStatus,
+		TopResources: topResources,
+	}
 }
 
 // GetByFilter возвращает список бронирований с пагинацией.

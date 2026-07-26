@@ -1,6 +1,9 @@
 package models
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // BookingRepository -- интерфейс репозитория бронирований.
 type BookingRepository interface {
@@ -16,9 +19,19 @@ type BookingRepository interface {
 	// GetByFilter возвращает список бронирований с пагинацией.
 	GetByFilter(ctx context.Context, filter BookingFilter) ([]Booking, int64, error)
 
-	// GetAwaitingConfirmation возвращает бронирования в статусе AwaitsConfirmation
-	// с пессимистичной блокировкой (SELECT ... FOR UPDATE SKIP LOCKED).
+	// GetAwaitingConfirmation возвращает бронирования в статусе AwaitsConfirmation.
+	// Без блокировки строк: при нескольких работающих инстансах воркера одна и
+	// та же запись может быть возвращена параллельно более чем одному вызову.
 	GetAwaitingConfirmation(ctx context.Context, limit int) ([]Booking, error)
+
+	// GetStuckCancellations возвращает бронирования в статусе CancellationPending,
+	// у которых cancellation_requested_at старше olderThan.
+	// Без блокировки строк: при нескольких работающих инстансах воркера одна и
+	// та же запись может быть возвращена параллельно более чем одному вызову.
+	GetStuckCancellations(ctx context.Context, olderThan time.Time, limit int) ([]Booking, error)
+
+	// GetStatistics возвращает статистику бронирований за указанный период.
+	GetStatistics(ctx context.Context, dateFrom, dateTo time.Time) (BookingStatistics, error)
 }
 
 // BookingFilter содержит параметры фильтрации и пагинации.

@@ -54,8 +54,29 @@ func (r *BookingsRepository) GetByID(ctx context.Context, id int64) (*models.Boo
 
 // Update обновляет статус бронирования.
 func (r *BookingsRepository) Update(ctx context.Context, booking *models.Booking) error {
-	tag, err := r.pool.Exec(ctx, queryUpdateBookingStatus,
+	var previousStatus *string
+	if booking.PreviousStatus() != "" {
+		s := string(booking.PreviousStatus())
+		previousStatus = &s
+	}
+
+	var cancellationRequestedAt *time.Time
+	if !booking.CancellationRequestedAt().IsZero() {
+		t := booking.CancellationRequestedAt()
+		cancellationRequestedAt = &t
+	}
+
+	var lastRetryAt *time.Time
+	if !booking.LastRetryAt().IsZero() {
+		t := booking.LastRetryAt()
+		lastRetryAt = &t
+	}
+
+	tag, err := r.pool.Exec(ctx, queryUpdateBooking,
 		string(booking.Status()),
+		previousStatus,
+		cancellationRequestedAt,
+		lastRetryAt,
 		booking.ID(),
 	)
 	if err != nil {
@@ -114,8 +135,10 @@ func (r *BookingsRepository) GetByFilter(ctx context.Context, filter models.Book
 	return bookings, totalCount, nil
 }
 
-// GetAwaitingConfirmation возвращает бронирования, ожидающие подтверждения,
-// с пессимистичной блокировкой FOR UPDATE SKIP LOCKED.
+// GetAwaitingConfirmation возвращает бронирования, ожидающие подтверждения.
+// Запрос выполняется вне явной транзакции, поэтому блокировку строк не
+// использует: параллельные вызовы (например, из нескольких инстансов
+// воркера) могут получить одни и те же записи.
 func (r *BookingsRepository) GetAwaitingConfirmation(ctx context.Context, limit int) ([]models.Booking, error) {
 	rows, err := r.pool.Query(ctx, queryGetAwaitingConfirmation, limit)
 	if err != nil {
@@ -135,42 +158,150 @@ func (r *BookingsRepository) GetAwaitingConfirmation(ctx context.Context, limit 
 	return bookings, rows.Err()
 }
 
+// GetStuckCancellations возвращает бронирования, зависшие в статусе
+// CancellationPending дольше заданного таймаута.
+// Запрос выполняется вне явной транзакции, поэтому блокировку строк не
+// использует: параллельные вызовы (например, из нескольких инстансов
+// воркера) могут получить одни и те же записи.
+func (r *BookingsRepository) GetStuckCancellations(ctx context.Context, olderThan time.Time, limit int) ([]models.Booking, error) {
+	rows, err := r.pool.Query(ctx, queryGetStuckCancellations, olderThan, limit)
+	if err != nil {
+		return nil, fmt.Errorf("получение зависших отмен: %w", err)
+	}
+	defer rows.Close()
+
+	var bookings []models.Booking
+	for rows.Next() {
+		booking, err := r.scanBookingFromRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("сканирование бронирования: %w", err)
+		}
+		bookings = append(bookings, *booking)
+	}
+
+	return bookings, rows.Err()
+}
+
+// GetStatistics возвращает агрегированную статистику бронирований за период.
+// Период включительный с обеих сторон, фильтрация по полю created_at.
+// Вся агрегация выполняется на стороне БД.
+func (r *BookingsRepository) GetStatistics(ctx context.Context, dateFrom, dateTo time.Time) (models.BookingStatistics, error) {
+	statusRows, err := r.pool.Query(ctx, queryGetBookingStatusCounts, dateFrom, dateTo)
+	if err != nil {
+		return models.BookingStatistics{}, fmt.Errorf("получение статистики по статусам: %w", err)
+	}
+	defer statusRows.Close()
+
+	byStatus := make(map[models.BookingStatus]int64)
+	var totalCount int64
+	for statusRows.Next() {
+		var status string
+		var count int64
+		if err := statusRows.Scan(&status, &count); err != nil {
+			return models.BookingStatistics{}, fmt.Errorf("сканирование статистики по статусам: %w", err)
+		}
+		byStatus[models.BookingStatus(status)] = count
+		totalCount += count
+	}
+	if err := statusRows.Err(); err != nil {
+		return models.BookingStatistics{}, fmt.Errorf("итерация по статистике статусов: %w", err)
+	}
+
+	resourceRows, err := r.pool.Query(ctx, queryGetTopResourcesByBookingCount, dateFrom, dateTo)
+	if err != nil {
+		return models.BookingStatistics{}, fmt.Errorf("получение топ ресурсов: %w", err)
+	}
+	defer resourceRows.Close()
+
+	var topResources []models.ResourceStatistic
+	for resourceRows.Next() {
+		var stat models.ResourceStatistic
+		if err := resourceRows.Scan(&stat.ResourceID, &stat.Count); err != nil {
+			return models.BookingStatistics{}, fmt.Errorf("сканирование топ ресурсов: %w", err)
+		}
+		topResources = append(topResources, stat)
+	}
+	if err := resourceRows.Err(); err != nil {
+		return models.BookingStatistics{}, fmt.Errorf("итерация по топ ресурсам: %w", err)
+	}
+
+	return models.BookingStatistics{
+		TotalCount:   totalCount,
+		ByStatus:     byStatus,
+		TopResources: topResources,
+	}, nil
+}
+
 // scanBooking сканирует одну строку в доменный объект Booking.
 func (r *BookingsRepository) scanBooking(row pgx.Row) (*models.Booking, error) {
 	var (
-		id         int64
-		status     string
-		userID     int64
-		resourceID int64
-		startDate  time.Time
-		endDate    time.Time
-		createdAt  time.Time
+		id                      int64
+		status                  string
+		userID                  int64
+		resourceID              int64
+		startDate               time.Time
+		endDate                 time.Time
+		createdAt               time.Time
+		previousStatus          *string
+		cancellationRequestedAt *time.Time
+		lastRetryAt             *time.Time
 	)
 
-	err := row.Scan(&id, &status, &userID, &resourceID, &startDate, &endDate, &createdAt)
+	err := row.Scan(&id, &status, &userID, &resourceID, &startDate, &endDate, &createdAt, &previousStatus, &cancellationRequestedAt, &lastRetryAt)
 	if err != nil {
 		return nil, err
 	}
 
-	return models.RestoreBooking(id, models.BookingStatus(status), userID, resourceID, startDate, endDate, createdAt), nil
+	return restoreBookingFromRow(id, status, userID, resourceID, startDate, endDate, createdAt, previousStatus, cancellationRequestedAt, lastRetryAt), nil
 }
 
 // scanBookingFromRows сканирует строку из pgx.Rows.
 func (r *BookingsRepository) scanBookingFromRows(rows pgx.Rows) (*models.Booking, error) {
 	var (
-		id         int64
-		status     string
-		userID     int64
-		resourceID int64
-		startDate  time.Time
-		endDate    time.Time
-		createdAt  time.Time
+		id                      int64
+		status                  string
+		userID                  int64
+		resourceID              int64
+		startDate               time.Time
+		endDate                 time.Time
+		createdAt               time.Time
+		previousStatus          *string
+		cancellationRequestedAt *time.Time
+		lastRetryAt             *time.Time
 	)
 
-	err := rows.Scan(&id, &status, &userID, &resourceID, &startDate, &endDate, &createdAt)
+	err := rows.Scan(&id, &status, &userID, &resourceID, &startDate, &endDate, &createdAt, &previousStatus, &cancellationRequestedAt, &lastRetryAt)
 	if err != nil {
 		return nil, err
 	}
 
-	return models.RestoreBooking(id, models.BookingStatus(status), userID, resourceID, startDate, endDate, createdAt), nil
+	return restoreBookingFromRow(id, status, userID, resourceID, startDate, endDate, createdAt, previousStatus, cancellationRequestedAt, lastRetryAt), nil
+}
+
+// restoreBookingFromRow конвертирует NULL-able колонки БД в доменный объект.
+func restoreBookingFromRow(
+	id int64,
+	status string,
+	userID, resourceID int64,
+	startDate, endDate, createdAt time.Time,
+	previousStatus *string,
+	cancellationRequestedAt *time.Time,
+	lastRetryAt *time.Time,
+) *models.Booking {
+	var prevStatus models.BookingStatus
+	if previousStatus != nil {
+		prevStatus = models.BookingStatus(*previousStatus)
+	}
+
+	var sentAt time.Time
+	if cancellationRequestedAt != nil {
+		sentAt = *cancellationRequestedAt
+	}
+
+	var retriedAt time.Time
+	if lastRetryAt != nil {
+		retriedAt = *lastRetryAt
+	}
+
+	return models.RestoreBooking(id, models.BookingStatus(status), userID, resourceID, startDate, endDate, createdAt, prevStatus, sentAt, retriedAt)
 }
