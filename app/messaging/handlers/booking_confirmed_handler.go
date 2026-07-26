@@ -44,13 +44,20 @@ func (h *BookingConfirmedHandler) Handle(ctx context.Context, body []byte) error
 		zap.Int64("catalogJobId", event.Id),
 	)
 
-	if err := h.service.Confirm(ctx, bookingID); err != nil {
+	previousStatus, err := h.service.Confirm(ctx, bookingID)
+	if err != nil {
 		if errors.Is(err, models.ErrBookingNotFound) || errors.Is(err, models.ErrInvalidStatusTransition) {
 			h.logger.Warn("подтверждение невозможно (не найдено или недопустимый переход), пропускаем событие",
 				zap.Int64("bookingId", bookingID), zap.Error(err))
 			return nil
 		}
 		return fmt.Errorf("подтверждение бронирования %d: %w", bookingID, err)
+	}
+
+	if previousStatus == models.BookingStatusCancellationPending {
+		h.logger.Warn("race condition: Catalog подтвердил бронирование, отмена которого уже была начата -- синхронизируемся с решением Catalog",
+			zap.Int64("bookingId", bookingID),
+		)
 	}
 
 	h.logger.Info("бронирование подтверждено через событие", zap.Int64("bookingId", bookingID))
