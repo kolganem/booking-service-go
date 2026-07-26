@@ -277,3 +277,24 @@ func createTestBooking(t *testing.T) *models.Booking {
 	require.NoError(t, err)
 	return b
 }
+
+func TestConfirm_FromCancellationPending_ClearsCancellationFields(t *testing.T) {
+	booking := createTestBooking(t)
+	require.NoError(t, booking.BeginCancellation(time.Now()))
+
+	err := booking.Confirm()
+
+	require.NoError(t, err)
+	assert.Equal(t, models.BookingStatusConfirmed, booking.Status())
+	assert.Equal(t, models.BookingStatus(""), booking.PreviousStatus())
+	assert.True(t, booking.CancellationRequestedAt().IsZero())
+}
+
+func TestConfirm_FromCancelled_Error(t *testing.T) {
+	booking := createTestBooking(t)
+	require.NoError(t, booking.Cancel(time.Now()))
+
+	err := booking.Confirm()
+
+	assert.ErrorIs(t, err, models.ErrInvalidStatusTransition)
+}
